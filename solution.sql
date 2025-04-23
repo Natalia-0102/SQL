@@ -1,147 +1,169 @@
--- Этап 1. Создание и заполнение БД
-CREATE SCHEMA raw_data;
+--Задача 1
 
-CREATE TABLE raw_data.sales (
-    id INTEGER PRIMARY KEY, /* id из CSV-файла. В нормализованных таблицах будет использоваться автоинкремент, но здесь он не нужен. */
-    auto CHARACTER varying(50) NOT NULL, /* Длина до 50 символов для учёта длинных названий. */
-    gasoline_consumption NUMERIC(3, 1), /* NUMERIC(3, 1) для точного хранения значений с одной десятичной цифрой. */
-    price NUMERIC(9, 2), /* NUMERIC(9, 2) для точного хранения до семизначной суммы с двумя десятичными знаками. */
-    date_purchase DATE, /*  Используем тип DATE для хранения даты. */
-    person_name CHARACTER varying(70), /* VARCHAR(70) для хранения длинных ФИО. */
-    phone CHARACTER varying(35), /* VARCHAR(35) для хранения номера телефона, включая возможные символы. */
-    discount INTEGER CHECK (discount >= 0 AND discount <= 100), /*  INTEGER с ограничением от 0 до 100. */
-    brand_origin CHARACTER varying(50) /*  VARCHAR(50) для хранения названия страны. */
-);
+/*Поставщик продукта «матча» (японский зелёный чай) прислал сертификат соответствия на товар:
 
-CREATE SCHEMA car_shop;
+{
+    "product_name": "чай матча",
+    "date": "23.07.2023",
+    "signed": [
+        "Морковкин А.А.",
+        "Зеленая Е.А."
+    ],
+    "weight": 200,
+    "country": "Вьетнам"   
+} 
+Добавьте этот сертификат в таблицу conformity_certs.*/
 
-CREATE TABLE car_shop.brands (
-    brand_id SERIAL PRIMARY KEY,
-    brand_name VARCHAR(50) NOT NULL,
-    origin_country VARCHAR(50) NOT NULL
-);
+--Решение:
 
-CREATE TABLE car_shop.car_models (
-    model_id SERIAL PRIMARY KEY,
-    model_name VARCHAR(100) NOT NULL,
-    brand_id INT,
-    FOREIGN KEY (brand_id) REFERENCES car_shop.brands(brand_id)
-);
-
-CREATE TABLE car_shop.colors (
-    color_id SERIAL PRIMARY KEY,
-    color_name VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE car_shop.customers (
-    customer_id SERIAL PRIMARY KEY,
-    person_name VARCHAR(100) NOT NULL,
-    phone VARCHAR(20) NOT NULL UNIQUE
-);
-
-INSERT INTO car_shop.brands (brand_name, origin_country)
-SELECT DISTINCT SPLIT_PART(auto, ' ', 1), brand_origin  -- Извлекаем только бренд
-FROM raw_data.sales;
-
-INSERT INTO car_shop.car_models (model_name, brand_id)
-SELECT DISTINCT 
-    TRIM(split_part(split_part(auto, ',', 1), ' ', 2)),  -- Извлекаем только модель без цвета
-    b.brand_id
-FROM raw_data.sales s
-INNER JOIN car_shop.brands b ON b.brand_name = split_part(s.auto, ' ', 1);
-
-INSERT INTO car_shop.colors (color_name)
-SELECT DISTINCT TRIM(split_part(auto, ',', 2)) -- Извлекаем только цвет
-FROM raw_data.sales
-WHERE split_part(auto, ',', 2) IS NOT NULL;
-
-INSERT INTO car_shop.customers (person_name, phone)
-SELECT DISTINCT person_name, phone
-FROM raw_data.sales;
-
-CREATE TABLE car_shop.sales_new (
-    sale_id SERIAL PRIMARY KEY,
-    model_id INT,
-    color_id INT NOT NULL,
-    customer_id INT NOT NULL,
-    price NUMERIC(9, 2) NOT NULL,
-    sale_date DATE NOT NULL,
-    discount INT CHECK (discount BETWEEN 0 AND 100),
-    FOREIGN KEY (model_id) REFERENCES car_shop.car_models(model_id),
-    FOREIGN KEY (color_id) REFERENCES car_shop.colors(color_id),
-    FOREIGN KEY (customer_id) REFERENCES car_shop.customers(customer_id)
-);
-
-INSERT INTO car_shop.sales_new (model_id, color_id, customer_id, price, sale_date, discount)
+INSERT INTO crispy_selery.conformity_certs(product_id, cert)
 SELECT 
-    cm.model_id,
-    cl.color_id,
-    cu.customer_id,
-    s.price,
-    s.date_purchase,
-    COALESCE(s.discount, 0)  -- Если скидка пустая, ставим 0
-FROM raw_data.sales s
-JOIN car_shop.car_models cm ON cm.model_name = TRIM(split_part(split_part(s.auto, ',', 1), ' ', 2))
-JOIN car_shop.colors cl ON cl.color_name = TRIM(split_part(s.auto, ',', 2))
-JOIN car_shop.customers cu ON cu.person_name = s.person_name; 
+    p.id,
+    '{
+        "product_name": "чай матча",
+        "date": "23.07.2023",
+        "signed": [
+            "Морковкин А.А.",
+            "Зеленая Е.А."
+        ],
+        "weight": 200,
+        "country": "Вьетнам"   
+    }'::jsonb
+FROM crispy_selery.products p
+WHERE p.name = 'матча';
 
 
--- Этап 2. Создание выборок
 
----- Задание 1. Напишите запрос, который выведет процент моделей машин, у которых нет параметра `gasoline_consumption`.
-SELECT (SUM(CASE WHEN gasoline_consumption IS NULL THEN 1 ELSE 0 END) * 100.0 / COUNT(*)) AS nulls_percentage_gasoline_consumption
-FROM raw_data.sales;
+--Задача 2
+/*У сертификата качества на сельдерей такая структура:
 
+{
+    "product_name": "сельдерей",
+    "certifications": [
+        {
+            "date": "01.06.2023",
+            "number": 123,
+            "result": "very good"
+        },
+        {
+            "date": "01.07.2023",
+            "number": 456,
+            "result": "good"
+        },
+        {
+            "date": "01.08.2023",
+            "number": 789,
+            "result": "very good"
+        }
+    ]
+} 
+При этом точное количество объектов в массиве certifications неизвестно.
+Найдите сертификат качества на продукт «сельдерей» и выведите результат его 
+последней сертификации (значение по ключу result) в формате text.Чтобы найти 
+последний элемент json-массива, примените отрицательную индексацию.*/
 
----- Задание 2. Напишите запрос, который покажет название бренда и среднюю цену его автомобилей в разбивке по всем годам с учётом скидки.
-SELECT 
-    b.brand_name, 
-    EXTRACT(YEAR FROM sn.sale_date) AS year,
-    ROUND(AVG(sn.price*(1-sn.discount/100)), 2) AS price_avg 
-FROM car_shop.brands b
-INNER JOIN car_shop.car_models cm ON cm.brand_id = b.brand_id 
-INNER JOIN car_shop.sales_new sn ON sn.model_id = cm.model_id
-GROUP BY b.brand_name, year
-ORDER BY b.brand_name ASC, year ASC;
+--Решение:
 
-
----- Задание 3. Посчитайте среднюю цену всех автомобилей с разбивкой по месяцам в 2022 году с учётом скидки.
-SELECT 
-    EXTRACT(MONTH FROM sale_date) AS month,
-    EXTRACT(YEAR FROM sale_date) AS year,
-    ROUND(AVG(price*(1-discount/100)), 2) AS price_avg 
-FROM car_shop.sales_new 
-WHERE EXTRACT(YEAR FROM sale_date) = 2022
-GROUP BY month, year
-ORDER BY month ASC;
-
-
----- Задание 4. Напишите запрос, который выведет список купленных машин у каждого пользователя.
-SELECT c.person_name, STRING_AGG((b.brand_name||' '||cm.model_name), ',') AS cars
-FROM car_shop.customers c 
-INNER JOIN car_shop.sales_new sn ON c.customer_id = sn.customer_id 
-INNER JOIN car_shop.car_models cm ON cm.model_id = sn.model_id
-INNER JOIN car_shop.brands b ON cm.brand_id  = b.brand_id
-GROUP BY c.person_name
-ORDER BY c.person_name ASC;
+SELECT cert -> 'certifications'-> -1 ->> 'result'
+FROM crispy_selery.conformity_certs
+WHERE cert ->> 'product_name' = 'сельдерей'
 
 
----- Задание 5 из 6. Напишите запрос, который вернёт самую большую и самую маленькую цену продажи автомобиля
---с разбивкой по стране без учёта скидки. Цена в колонке price дана с учётом скидки.
-
-SELECT b.origin_country, 
-    MAX(sn.price/(1-sn.discount/100)) AS price_max, 
-    MIN(sn.price/(1-sn.discount/100)) AS price_min
-FROM car_shop.brands b 
-INNER JOIN car_shop.car_models cm ON cm.brand_id  = b.brand_id
-INNER JOIN car_shop.sales_new sn ON cm.model_id = sn.model_id
-GROUP BY b.origin_country;
 
 
----- Задание 5. Напишите запрос, который покажет количество всех пользователей из США.
-SELECT COUNT(customer_id) AS persons_from_usa_count
-FROM car_shop.customers
-WHERE phone LIKE '+1%';
+--Задача 3
+/*Это образец сертификата качества на миндальное молоко:
+
+{
+    "cert_date": "01.09.2023",
+    "cert_number": 12345,
+    "product_name": "миндальное молоко",
+    "signed": [
+        "Иванов И.И.",
+        "Петров П.П."
+    ]
+} 
+Найдите фактический сертификат в таблице conformity_certs и посчитайте, 
+сколько человек его подписали — signed.*/
+
+--Решение:
+
+SELECT JSONB_ARRAY_LENGTH(cert ->'signed')
+FROM crispy_selery.conformity_certs cc
+JOIN crispy_selery.products p ON cc.product_id = p.id
+WHERE cert ->> 'product_name' = 'миндальное молоко'
 
 
+
+
+--Задача 4
+/*Вот сертификат качества на сельдерей:
+
+{
+    "product_name": "сельдерей",
+    "certifications": [
+        {
+            "date": "01.06.2023",
+            "number": 123,
+            "result": "very good"
+        },
+        {
+            "date": "01.07.2023",
+            "number": 456,
+            "result": "good"
+        },
+        {
+            "date": "01.08.2023",
+            "number": 789,
+            "result": "very good"
+        }
+    ]
+} 
+Обновите значение в таблице conformity_certs. Для этого измените номер первой 
+сертификации в массиве certifications. Правильное значение номера — 101.*/
+
+--Решение:
+
+UPDATE crispy_selery.conformity_certs
+SET cert = jsonb_set(cert, '{certifications, 0, number}', '101'::jsonb)
+WHERE product_id IN (
+    SELECT id 
+    FROM crispy_selery.products 
+    WHERE name = 'сельдерей'
+)
+AND cert @> '{"certifications": [{"number": 123}]}';
+
+
+
+--Задача 5
+/*По сертификату на сельдерей пришло дополнение. Нужно добавить к нему следующую пару ключ-значение:
+
+"country": "Россия" 
+Обновите значение в таблице conformity_certs.*/
+
+--Решение:
+
+UPDATE crispy_selery.conformity_certs
+SET cert = cert || '{"country": "Россия"}'::jsonb
+WHERE product_id IN (
+    SELECT id 
+    FROM crispy_selery.products 
+    WHERE name = 'сельдерей'
+);
+
+
+
+--Задача 6
+/*По новым стандартам фамилии подписантов больше не указываются в сертификате качества. 
+Исправьте сертификат на миндальное молоко и уберите из него ключ signed и его значение.*/
+
+--Решение:
+
+UPDATE crispy_selery.conformity_certs
+SET cert = cert - 'signed'
+WHERE product_id IN (
+    SELECT id 
+    FROM crispy_selery.products 
+    WHERE name = 'миндальное молоко'
+);
 
